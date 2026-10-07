@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>HTMLゲームビューア</title>
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ゲームPC">
+    <link rel="apple-touch-icon" id="dynamic-favicon">
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+            background-color: #000000;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            overflow: hidden;
+            padding: 6px env(safe-area-inset-right) 6px env(safe-area-inset-left);
+            gap: 8px;
+            font-family: "MS PMincho", "Hiragino Mincho ProN", sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ---------------- 左側：16:9 表示エリアの外枠 ---------------- */
+        .screen-container {
+            flex: 1; /* コントローラー以外の残りの空間を全て使う */
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-width: 0;
+        }
+
+        /* 絶対に16:9を崩さないディスプレイ枠（JSで厳密に計算） */
+        .display-area {
+            background-color: #000000;
+            position: relative;
+            overflow: hidden;
+            border: 2px solid #000080;
+            box-shadow: 0 0 8px rgba(0, 0, 128, 0.4);
+            transform: translateZ(0);
+        }
+
+        #drop-zone {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: #f4f6fa;
+            color: #000080;
+            cursor: pointer;
+            text-align: center;
+            padding: 10px;
+        }
+        #drop-zone h2 { font-size: 15px; margin-bottom: 4px; }
+        #drop-zone p { font-size: 11px; color: #555; }
+
+        /* ゲーム表示iframe（Retinaネイティブ高解像度） */
+        #render-frame {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: none;
+            background-color: #000000;
+        }
+
+        #virtual-cursor {
+            position: absolute;
+            width: 16px;
+            height: 22px;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 99999;
+            transform: translate(0, 0);
+        }
+
+        /* ---------------- 右側：コントローラーエリア ---------------- */
+        .controller-area {
+            width: 190px;
+            height: calc(100dvh - 12px);
+            background-color: #0a0a14;
+            border: 1.5px solid #000080;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            padding: 6px;
+            gap: 6px;
+            flex-shrink: 0;
+            touch-action: none;
+        }
+
+        .ctrl-top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .open-file-btn {
+            background-color: #1a2238;
+            color: #89a4e6;
+            border: 1px solid #000080;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .open-file-btn:active {
+            background-color: #000080;
+            color: #ffffff;
+        }
+
+        .touchpad-box {
+            flex: 1;
+            background-color: #121220;
+            border: 1px solid #1c274c;
+            border-radius: 6px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        .touchpad-label {
+            color: #4a5d8a;
+            font-size: 10px;
+            letter-spacing: 1px;
+            pointer-events: none;
+        }
+
+        .keypad-box {
+            height: 145px;
+            display: flex;
+            flex-direction: row;
+            gap: 6px;
+        }
+
+        .dpad-container {
+            width: 95px;
+            height: 95px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 3px;
+            margin: auto 0;
+        }
+
+        .k-btn {
+            background-color: #c0c0c0;
+            color: #000000;
+            font-size: 11px;
+            font-weight: bold;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-top: 2px solid #ffffff;
+            border-left: 2px solid #ffffff;
+            border-right: 2px solid #555555;
+            border-bottom: 2px solid #555555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .k-btn.active, .k-btn:active {
+            background-color: #a0a0a0;
+            border-top: 2px solid #555555;
+            border-left: 2px solid #555555;
+            border-right: 2px solid #ffffff;
+            border-bottom: 2px solid #ffffff;
+            transform: translateY(1px);
+        }
+
+        .d-up    { grid-column: 2; grid-row: 1; }
+        .d-left  { grid-column: 1; grid-row: 2; }
+        .d-down  { grid-column: 2; grid-row: 2; }
+        .d-right { grid-column: 3; grid-row: 2; }
+
+        .action-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 4px;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 4px;
+            flex: 1;
+        }
+        .btn-row .k-btn {
+            flex: 1;
+            font-size: 10px;
+        }
+
+        #file-input { display: none; }
+    </style>
+</head>
+<body>
+
+    <input type="file" id="file-input" accept=".html,.htm,text/html">
+
+    <!-- 左側：16:9 外枠コンテナ -->
+    <div class="screen-container" id="screenContainer">
+        <!-- 厳密に16:9が保証される画面枠 -->
+        <div class="display-area" id="displayArea">
+            <div id="virtual-cursor">
+                <svg width="16" height="22" viewBox="0 0 16 22" fill="none">
+                    <path d="M1 1V19L5.5 14.5L9 21L11.5 20L8 13.5H14L1 1Z" fill="#FFFFFF" stroke="#000000" stroke-width="1.6" stroke-linejoin="round"/>
+                </svg>
+            </div>
+
+            <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+                <h2>HTML ファイルを描画</h2>
+                <p>タップして選択 / ドロップ</p>
+            </div>
+
+            <iframe id="render-frame" sandbox="allow-scripts allow-same-origin"></iframe>
+        </div>
+    </div>
+
+    <!-- 右側：コントローラー -->
+    <div class="controller-area">
+        <div class="ctrl-top-bar">
+            <button class="open-file-btn" id="openFileBtn">FILE LOAD</button>
+            <span style="font-size: 9px; color: #4a5d8a;">16:9 FIXED</span>
+        </div>
+
+        <div class="touchpad-box" id="touchpad">
+            <div class="touchpad-label">TOUCHPAD</div>
+        </div>
+
+        <div class="keypad-box">
+            <div class="dpad-container">
+                <div class="k-btn d-up" data-keys='[{"key":"ArrowUp","code":"ArrowUp","codeNum":38},{"key":"w","code":"KeyW","codeNum":87}]'>↑</div>
+                <div class="k-btn d-left" data-keys='[{"key":"ArrowLeft","code":"ArrowLeft","codeNum":37},{"key":"a","code":"KeyA","codeNum":65}]'>←</div>
+                <div class="k-btn d-down" data-keys='[{"key":"ArrowDown","code":"ArrowDown","codeNum":40},{"key":"s","code":"KeyS","codeNum":83}]'>↓</div>
+                <div class="k-btn d-right" data-keys='[{"key":"ArrowRight","code":"ArrowRight","codeNum":39},{"key":"d","code":"KeyD","codeNum":68}]'>→</div>
+            </div>
+
+            <div class="action-container">
+                <div class="btn-row">
+                    <div class="k-btn" data-keys='[{"key":"z","code":"KeyZ","codeNum":90}]'>Z</div>
+                    <div class="k-btn" data-keys='[{"key":"x","code":"KeyX","codeNum":88}]'>X</div>
+                </div>
+                <div class="btn-row">
+                    <div class="k-btn" data-keys='[{"key":" ","code":"Space","codeNum":32}]'>SPACE</div>
+                </div>
+                <div class="btn-row">
+                    <div class="k-btn" data-keys='[{"key":"Enter","code":"Enter","codeNum":13}]'>ENTER</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ---------------- 触覚＆クリック感フィードバック ----------------
+        let audioCtx = null;
+        function triggerHapticFeedback() {
+            // Android等のVibration API対応端末
+            try {
+                if (navigator.vibrate) navigator.vibrate(12);
+            } catch (e) {}
+
+            // iPhone (iOS) 用：心地よいメカニカルクリック感覚を合成
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(140, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.03);
+                gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.03);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.03);
+            } catch (e) {}
+        }
+
+        // PWAアイコン自動生成
+        (function generateIcon() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 192; canvas.height = 192;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, 192, 192);
+            ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px "MS PMincho", serif';
+            ctx.textAlign = 'center'; ctx.fillText('GAME', 96, 110);
+            document.getElementById('dynamic-favicon').href = canvas.toDataURL('image/png');
+        })();
+
+        const screenContainer = document.getElementById('screenContainer');
+        const display = document.getElementById('displayArea');
+        const fileInput = document.getElementById('file-input');
+        const dropZone = document.getElementById('drop-zone');
+        const renderFrame = document.getElementById('render-frame');
+        const cursor = document.getElementById('virtual-cursor');
+        const touchpad = document.getElementById('touchpad');
+        const openFileBtn = document.getElementById('openFileBtn');
+
+        // ---------------- 厳密な 16:9 自動フィッティング計算 ----------------
+        function fitExact169() {
+            const availW = screenContainer.clientWidth;
+            const availH = screenContainer.clientHeight;
+
+            // 16:9 (幅 / 高さ = 16 / 9)
+            let w = availW;
+            let h = w * (9 / 16);
+
+            // 高さが枠をはみ出す場合は高さを基準にする
+            if (h > availH) {
+                h = availH;
+                w = h * (16 / 9);
+            }
+
+            // 厳密に16:9のpxを指定（絶対に潰れない）
+            display.style.width = `${Math.floor(w)}px`;
+            display.style.height = `${Math.floor(h)}px`;
+
+            updateCursor();
+        }
+
+        window.addEventListener('resize', fitExact169);
+        window.addEventListener('orientationchange', fitExact169);
+
+        // ---------------- HTML読込 ----------------
+        function loadHTML(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                renderFrame.srcdoc = e.target.result;
+                dropZone.style.display = 'none';
+                renderFrame.style.display = 'block';
+                fileInput.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        openFileBtn.addEventListener('click', () => {
+            triggerHapticFeedback();
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', (e) => loadHTML(e.target.files[0]));
+
+        display.addEventListener('dragover', (e) => { e.preventDefault(); });
+        display.addEventListener('drop', (e) => {
+            e.preventDefault();
+            triggerHapticFeedback();
+            if (e.dataTransfer.files.length > 0) loadHTML(e.dataTransfer.files[0]);
+        });
+
+        // ---------------- キーイベント送信 ----------------
+        function triggerKey(keyData, isDown) {
+            if (!renderFrame.contentWindow) return;
+            const keys = JSON.parse(keyData);
+            const type = isDown ? 'keydown' : 'keyup';
+
+            keys.forEach(k => {
+                const event = new KeyboardEvent(type, {
+                    key: k.key,
+                    code: k.code,
+                    keyCode: k.codeNum,
+                    which: k.codeNum,
+                    bubbles: true,
+                    cancelable: true
+                });
+                renderFrame.contentWindow.dispatchEvent(event);
+                if (renderFrame.contentDocument) {
+                    renderFrame.contentDocument.dispatchEvent(event);
+                }
+            });
+        }
+
+        document.querySelectorAll('.k-btn').forEach(btn => {
+            const keyData = btn.getAttribute('data-keys');
+            
+            const handlePress = (e) => {
+                e.preventDefault();
+                btn.classList.add('active');
+                triggerHapticFeedback();
+                triggerKey(keyData, true);
+            };
+            const handleRelease = (e) => {
+                e.preventDefault();
+                btn.classList.remove('active');
+                triggerKey(keyData, false);
+            };
+
+            btn.addEventListener('touchstart', handlePress, { passive: false });
+            btn.addEventListener('touchend', handleRelease, { passive: false });
+            btn.addEventListener('touchcancel', handleRelease, { passive: false });
+        });
+
+        // ---------------- トラックパッド操作 ----------------
+        let cursorX = 40, cursorY = 40;
+        let lastTouchX = 0, lastTouchY = 0;
+        let isTouching = false;
+        let touchStartTime = 0, touchDist = 0;
+        const SENSITIVITY = 1.35;
+
+        function updateCursor() {
+            const b = display.getBoundingClientRect();
+            cursorX = Math.max(0, Math.min(b.width - 2, cursorX));
+            cursorY = Math.max(0, Math.min(b.height - 2, cursorY));
+            cursor.style.transform = `translate(${cursorX}px, ${cursorY}px)`;
+        }
+
+        touchpad.addEventListener('touchstart', (e) => {
+            const t = e.touches[0];
+            lastTouchX = t.clientX; lastTouchY = t.clientY;
+            isTouching = true; touchStartTime = Date.now(); touchDist = 0;
+        }, { passive: false });
+
+        touchpad.addEventListener('touchmove', (e) => {
+            if (!isTouching) return;
+            const t = e.touches[0];
+            const dx = (t.clientX - lastTouchX) * SENSITIVITY;
+            const dy = (t.clientY - lastTouchY) * SENSITIVITY;
+            cursorX += dx; cursorY += dy;
+            touchDist += Math.hypot(dx, dy);
+            lastTouchX = t.clientX; lastTouchY = t.clientY;
+            updateCursor();
+        }, { passive: false });
+
+        touchpad.addEventListener('touchend', () => {
+            isTouching = false;
+            if (Date.now() - touchStartTime < 250 && touchDist < 6) {
+                triggerHapticFeedback();
+                if (renderFrame.style.display === 'block' && renderFrame.contentDocument) {
+                    const el = renderFrame.contentDocument.elementFromPoint(cursorX, cursorY);
+                    if (el) el.click();
+                } else {
+                    fileInput.click();
+                }
+            }
+        });
+
+        window.addEventListener('load', fitExact169);
+    </script>
+</body>
+</html>
